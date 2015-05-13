@@ -1,6 +1,6 @@
 # fractal maker
 
-A program to generate fractals
+A program that generates fractals
 
 can be found at:
 
