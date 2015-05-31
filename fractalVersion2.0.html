@@ -1,0 +1,1286 @@
+<html>
+<head><title>How to make a fractal</title></head>
+<body>
+
+<div id="howToFractal140710" style="font-family: 'Times New Roman'; font-size: 16px; height: 640px; line-height: 17px;">
+</div>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<script type="text/javaScript">
+(function () {
+
+/*fractal improvements based on playtesting 9/26:
+
+more info button stuff
+
+//circle around colored point
+//super slow mo
+//don't use instructions to say click to fast forward. it's distracting and one more thing the user has to look at.
+//instead put it at the bottom, for instuctions, or off to the side.
+//explain iteration better.
+//explain random points 200better.
+//"We are coloring many points. Each point is being colored by the number of iterations it takes to escape."
+//after first step, the first "one new point" seems off. just automatically go to "one new  point"
+//point out buttons, such as zoom in, or area.
+//Suggest points for Julia set.
+//Start new fractal,  then new julia set or new mandelbrot set
+//Julia set one point instruction missing
+//after first click, draw an arrow to buttons on canvas. onclick.
+//almost always, if the canvas would disable clicks, instead send to buttons
+//different starting point?
+//make points in an area not cover up the area with circle.
+//pink to different color?
+//A fractal is made by coloring the canvas point by point.
+//Many random points, fewer than 400. make it not go so long. Less emphasis, 
+*/
+
+var DIV_CONTAINER_ID = "howToFractal140710";
+var postBody=document.getElementById(DIV_CONTAINER_ID);
+
+var canvas=document.createElement("CANVAS");
+postBody.appendChild(canvas);
+canvas.height=635;
+canvas.width=635;
+canvas.style.position="absolute";
+canvas.style.top="0px";
+canvas.style.left="0px";
+canvas.style.backgroundColor="white";
+canvas.style.border="1px solid black";
+
+var drawing={
+ cPlane:canvas.getContext("2d"), // the canvas context
+ steps:[], // the instructions for drawing. "official" copy. Animation will run till its end.
+ addSteps:[], //will become part of steps, but only at the end of current procedure, on wrapUp.
+ tempSteps:[], //will be drawn at the end of the current procedure, but not become part of steps, on wrapUp
+ busyUntil:Date.now(), //the drawing is doing something until this time.
+ animate:true, //set to false to stop animation
+ nextAnimationFrame:undefined, //variable for setTimer for animation
+ waitingToDraw:[], // variable for setTimeout, outside of animation
+ lastPoint:0, //the last point that contains a dot
+ juliaBackground:undefined // imgData step of mandelbrot set for Julia set background
+};
+
+var PX_PER_UNIT=180;
+var ORIGIN_OFFSET=335;
+
+drawing.cPlane.translate(ORIGIN_OFFSET,ORIGIN_OFFSET);
+drawing.cPlane.scale(PX_PER_UNIT,-PX_PER_UNIT); 
+
+var DRAWSTYLES={ // presets for lines, arrows, etc.
+ zc:{lineWidth:2.5/PX_PER_UNIT, strokeStyle:"red", fillStyle:"red"},
+ z:{lineWidth:2.5/PX_PER_UNIT, strokeStyle:"blue", fillStyle:"blue"},
+ zn:{lineWidth:2.5/PX_PER_UNIT, strokeStyle:"blue", fillStyle:"blue"},
+ helper:{lineWidth:1/PX_PER_UNIT, strokeStyle:"silver", fillStyle:"silver"},
+ rotationStep:{lineWidth:1/PX_PER_UNIT, strokeStyle:"goldenrod", fillStyle:"goldenrod"},
+ dilationStep:{lineWidth:1/PX_PER_UNIT, strokeStyle:"seagreen", fillStyle:"seagreen"},
+ translationStep:{lineWidth:1/PX_PER_UNIT, strokeStyle:"hotpink", fillStyle:"hotpink"}
+}
+
+var state={
+ fastPlay:false, //playing through the iterations quickly. 
+ skipAll: false, //sets all duration to 0, skipping most/all animations.
+ allowFastPlay:false, //allows to skip to the end of the iterations
+ allowManyPoints:false,
+ allowAreaPaint:false,
+ allowAllPaint:false, //allows the "paint all" option
+ fractalType:"mandelbrot" //decides the fractal type. "mandelbrot" and "julia"
+};
+
+/*enable all for testing, disable for actual //*
+state.allowFastPlay=true
+state.allowManyPoints=true
+state.allowAreaPaint=true
+state.allowAllPaint=true
+//*/
+
+var instructions=document.createElement("DIV");
+postBody.appendChild(instructions);
+$(instructions).css({
+ "position":"absolute",
+ "top":"0px",
+ "left":"0px",
+ "background-color":"yellow",
+ "width":"629px",
+ "border":"1px solid black",
+ "padding":"3px"
+});
+
+function CNum(real,imaginary) {
+ this.a=real;
+ this.b=imaginary;
+}
+CNum.prototype = {
+ r:function () {return Math.sqrt(this.a*this.a+this.b*this.b)},
+ theta:function() { // range from 0 to 2pi
+  if (this.a===0 && this.b===0) {
+   return 0;
+  } else {
+   var angle=Math.atan(this.b/this.a);
+   if (this.a<0) {angle+=Math.PI;}
+   if (angle<0) {angle+=2*Math.PI;}
+   return angle;
+  }
+ },
+ square:function() {
+  var a0=this.a;
+  var b0=this.b;
+  return new CNum(a0*a0-b0*b0,2*a0*b0);
+ } 
+}
+
+var z={ //various complex numbers and associated stuff
+ zero:new CNum(0,0),
+ i:new CNum(0,0),
+ f:new CNum(0,0),
+ c:undefined,//new CNum(0,0),
+ n:0,
+ maxN:50,
+ nextZf:function() {
+  var af=z.f.a;
+  var bf=z.f.b;
+  z.f.a=z.c.a+af*af-bf*bf;
+  z.f.b=z.c.b+2*af*bf;
+  z.n++;
+ },
+ escaped:function() {
+  return z.f.r() > 2.5
+ },
+ getColor:function() {
+  switch (z.n) {
+   case 1:
+    return "maroon";
+   case 2:
+    return "orange";
+   case 3:
+    return "teal"
+   case 4:
+    return "red"
+   case 5:
+    return "green"
+   default:
+    if (z.n<9) {return "pink"}
+    if (z.n<14) {return "purple"}
+    if (z.n<25) {return "blue"}
+    if (z.n<z.maxN) {return "aqua"}
+    if (z.n>=z.maxN) {return "black"}
+  }
+ },
+ getRGB:function() {
+  switch (z.n) {
+   case 1:
+    return [128,0,0]
+   case 2:
+    return [255,165,0]
+   case 3:
+    return [0,128,128]
+   case 4:
+    return [255,0,0]
+   case 5:
+    return [0,128,0]
+   default:
+    if (z.n<9) {return [255,192,203]}
+    if (z.n<14) {return [128,0,128]}
+    if (z.n<25) {return [0,0,255]}
+    if (z.n<z.maxN) {return [0,255,255]}
+    if (z.n>=z.maxN) {return [0,0,0]}
+  }
+ }
+}
+
+function setup(cPlane,style) {
+ if (style) {
+  cPlane.save();
+  for (prop in style){cPlane[prop]=style[prop]}
+ }
+ cPlane.save();
+
+ cPlane.lineWidth=1/PX_PER_UNIT;
+ cPlane.strokeStyle="lightgray";
+ cPlane.beginPath();
+ cPlane.moveTo(-2,0);
+ cPlane.lineTo(2,0);
+ cPlane.moveTo(0,2);
+ cPlane.lineTo(0,-2);
+ cPlane.stroke();
+
+ cPlane.lineWidth=2/PX_PER_UNIT;
+ cPlane.strokeStyle="black";
+ cPlane.beginPath();
+ cPlane.moveTo(-1,0);
+ cPlane.lineTo(1,0);
+ cPlane.moveTo(0,1);
+ cPlane.lineTo(0,-1);
+ cPlane.stroke();
+
+ cPlane.lineWidth=1/PX_PER_UNIT;
+ cPlane.beginPath();
+ cPlane.moveTo(1,0);
+ cPlane.arc(0,0,1,0,2*Math.PI);
+ cPlane.stroke();
+
+ cPlane.strokeStyle="lightgray";
+ cPlane.beginPath();
+ cPlane.moveTo(2,0);
+ cPlane.arc(0,0,2,0,2*Math.PI);
+ cPlane.stroke();
+ 
+ cPlane.fillStyle="lightgray"
+ text("1",1.01,-0.07,cPlane);
+ text("i",0.02,1.02,cPlane);
+ text("r=2",1.55,-1.32,cPlane);
+ text("r=1",0.73,-0.74,cPlane);
+ 
+ cPlane.restore();
+ if (style) {cPlane.restore()}
+}
+drawing.steps[0]=draw(setup,true,drawing.cPlane);
+
+function startingText(cPlane) {
+ text("Click here!",0.37,0.47,cPlane);
+ circle(0.52,0.43,0.03,cPlane,{fillStyle:"red"});
+ //text("Look up for instructions!",-1.6,0.8,cPlane);
+}
+
+function makeButton(buttonHtml, parent) {
+ var button = document.createElement("BUTTON");
+ button.innerHTML=buttonHtml;
+ parent.appendChild(button);
+ return button
+}
+
+function instructionsSetup(instructions) {
+ $(instructions).empty();
+ var primeDiv=document.createElement("DIV");
+ instructions.appendChild(primeDiv);
+ var buttonDiv=document.createElement("DIV");
+ instructions.appendChild(buttonDiv);
+ var infoDiv=document.createElement("DIV");
+ instructions.appendChild(infoDiv);
+ $(infoDiv).hide();
+ var infoButton=makeButton("More info...", buttonDiv)
+ infoButton.style.cssFloat="right";
+ buttonDiv.style.overflow="auto";
+ infoButton.onclick=function(){toggleInfo(instructions, infoButton, infoDiv)}
+ function toggleInfo(instructions, infoButton, infoDiv) {
+  if (infoButton.innerHTML==="More info...") {
+   infoButton.innerHTML="Less info...";
+   $(infoDiv).show();
+  } else {
+   infoButton.innerHTML="More info...";
+   $(infoDiv).hide();
+  }
+ }
+ return {primeDiv:primeDiv, buttonDiv:buttonDiv, infoDiv:infoDiv}
+}
+
+introHook(drawing,state,z,instructions,canvas); //starts off the rest of iterate
+function introHook(drawing,state,z,instructions,canvas) {
+ function newInstructions(drawing,state,z,instructions,canvas) {
+  var divs=instructionsSetup(instructions);
+  divs.primeDiv.innerHTML="Fractals are pictures with an infinite amount of repeating details in them - click the 'More info...' button to see some examples! Here we'll draw the Mandelbrot set fractal, point by point: we pick a point and color it, then repeat the process for many points until they make the fractal.";
+
+  function introInfoDiv(divs,drawing,state,z,instructions,canvas) {
+   divs.infoDiv.innerHTML="<br>Fractals look awesome! Here's a small sample of the pictures you'll be making:<br><br><img src='http://2.bp.blogspot.com/-L3aJrmQivQM/VFIGCtak8qI/AAAAAAAAA2Q/blPbByIhU7Q/s1600/fractal%2Bintro.png' style='display:block;margin-left:auto;margin-right:auto'></img><br>You can enable all of the modes immediately by pressing this button. But don't use it if you haven't yet gone through everything yourself! ";
+   var enableAllModes=makeButton("Enable all modes",divs.infoDiv);
+   enableAllModes.onclick=function(){
+    $(instructions).slideUp("fast",function(){
+     var divs=instructionsSetup(instructions);
+     state.allowFastPlay=true;
+     state.allowManyPoints=true;
+     state.allowAreaPaint=true;
+     state.allowAllPaint=true;
+     divs.primeDiv.innerHTML="Which points should we color?";
+     divs.infoDiv.innerHTML="<br>'A new point' will explain the procedure for determining the color of a single point, focusing on the three steps of each iteration, and how the number of iterations determine the color of the point.<br><br>'Some random points' will color many scattered random points very quickly.<br><br>'Points in a small area' will allow you to color the points in a small area, producing a mosaic pattern in which a part of the whole fractal can be discerned.<br><br>'Every single point' will color every point on the canvas, at a much higher resolution than the 'Points in a small area' button. This will display the full fractal.";
+     whatNextUISetup(divs.buttonDiv,drawing,state,z,instructions,canvas);
+     $(instructions).slideDown("fast")
+    })
+   }
+  }
+  introInfoDiv(divs,drawing,state,z,instructions,canvas);
+
+  var smallAreaButton=makeButton("Show me how that works", divs.buttonDiv)
+  var counter=-1;
+  smallAreaButton.onclick=function() {
+   $(instructions).slideUp("fast",function(){
+    var divs=instructionsSetup(instructions);
+    var firstPointButton=makeButton("How do you determine the color for a single point?", divs.buttonDiv)
+    firstPointButton.onclick=function(){
+     z.c=undefined;
+     firstPointInstuctions(drawing,state,z,instructions,canvas);  
+    }
+    var smallAreaButton2=makeButton("Show me another patch of points", divs.buttonDiv)
+    smallAreaButton2.onclick=smallAreaButton.onclick;
+    canvas.onclick=function(){
+     canvas.onclick=function(){animatePointToButtons(drawing)}
+     state.skipAll=true
+     removeSteps([textSkipReminder],drawing)
+     drawing.lastPoint--;
+    }
+    divs.primeDiv.innerHTML="You see? Each point gets a color, and the set of points makes a picture. Later, we'll do this for every point on the canvas to make the full fractal. For now, let's focus on a single point."
+    introInfoDiv(divs,drawing,state,z,instructions,canvas);
+   })
+   counter=(counter+1)%2;
+   var x
+   var y
+   switch (counter) {
+    case 1:
+     x=-1.69;
+     y=-0.165;
+     break;
+    case 0:
+     x=-1.69;
+     y=0.165;
+     drawing.lastPoint=0;
+     drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+     break;
+   }
+   var textSkipReminder=draw(text,false,"Click anywhere to fast forward",-1.68,-1.5,drawing.cPlane,"bold 13px Arial",{fillStyle:"black"});
+   drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+   drawing.steps.push(textSkipReminder);
+   drawing.lastPoint++;
+ 
+   multipleAnimate(400,drawing,state,z,instructions,canvas,function(){ //200 is temp, restore to 400 later
+    if (!state.skipAll) {
+     removeSteps([textSkipReminder],drawing);
+     drawing.lastPoint--;
+    }
+    canvas.onclick=function(){animatePointToButtons(drawing)}
+    state.skipAll=false;
+    flattenDrawing(drawing,canvas);
+    $(instructions).slideDown("fast");
+   },x,y);
+  }
+ }
+ canvas.onclick=function(){animatePointToButtons(drawing)}
+ newInstructions(drawing,state,z,instructions,canvas);
+ $(instructions).slideDown("fast");
+}
+
+function firstPointInstuctions(drawing,state,z,instructions,canvas) {
+ $(instructions).slideUp("fast",function(){newInstructions(drawing,state,z,instructions,canvas)});
+ $(instructions).slideDown("fast");
+ function newInstructions(drawing,state,z,instructions,canvas) {
+  var divs=instructionsSetup(instructions);
+  if (state.fractalType==="julia" && drawing.lastPoint===1 && z.c===undefined) {
+   divs.primeDiv.innerHTML="We're drawing the Julia set. Here, we choose a point at the beginning to parameterize the fractal, so there is a different fractal for every choice of that initial point. Try different points!";
+   divs.infoDiv.innerHTML="<br>For the Julia set, the point that we choose becomes our red arrow, which stays the same for all points on the canvas. Compare that to the Mandelbrot set, where the red arrow pointed to whichever point we were starting our iterations from. Because the red arrow is part of the 'translation' step in each iteration, choosing a different red arrow gives you a different iteration result, which ultimately gives you a different fractal shape.<br><br>Even small differences in the choice of initial point can have big consequences. Try making different Julia set fractals with the initial point just a few pixels apart.";
+   text("Try this point!",-0.43,0.69,drawing.cPlane);
+   circle(-0.21,0.79,0.03,drawing.cPlane,{fillStyle:"black"});
+   text("Or this point!",-0.86,-0.26,drawing.cPlane);
+   circle(-0.79,-0.16,0.03,drawing.cPlane,{fillStyle:"blue"});
+   text("Or this point!",0.2,0.09,drawing.cPlane);
+   circle(0.31,0.03,0.03,drawing.cPlane,{fillStyle:"red"});
+   text("Or any other point!",0.98,-0.4,drawing.cPlane);
+   text("You'll get interesting fractals from choosing points near the edge of the Mandelbrot set!",-1.3,-1.25,drawing.cPlane);
+  } else if (state.fractalType==="mandelbrot" && drawing.lastPoint===1 && z.c===undefined) { //program starts like this
+   divs.primeDiv.innerHTML="First, we need to choose a point, so that we can determine its color. Click on the point below!";
+   divs.infoDiv.innerHTML="<br>The color of each point is determined by the number of iterations that it takes to escape far beyond the canvas. Each iteration consists of three steps: rotation, dilation, and translation:<br><br><img src='http://4.bp.blogspot.com/-MLiBIREuff0/VEjHP0ezhiI/AAAAAAAAA1s/kwWwJiUeDtM/s1600/iteration%2Bsteps%2Bcropped.png' style='display:block;margin-left:auto;margin-right:auto'></img><br>The rotation step simply rotates our point about the origin, until it doubles the angle that our point makes with the positive x axis. In the picture above, this step rotates our point from the tip of the red arrow to the tip of the straight gold arrow.<br><br>The dilation step squares the length of the arrow. The black circle in the picture has a radius of 1. A number greater than 1 gets bigger when it's squared, whereas a number less than 1 gets smaller. So arrows outside the circle get longer, and arrows inside get shorter. In the picture above, this step takes our point from the tip of the gold arrow to the tip of the green arrow.<br><br>The translation step moves our point by the same magnitude and direction as the red arrow. The red arrow is slid over (which is shown as the pink arrow above) to the tip of the green arrow, then our point is moved along it. So in the picture above, this step takes our point from the tip of the green arrow to the tip of the pink arrow. That completes one iteration.<br><br>Under the hood, this is all accomplished with math using complex numbers. Look it up!";
+   startingText(drawing.cPlane);
+  } else if (state.fractalType==="mandelbrot") {
+   divs.primeDiv.innerHTML="Click on a new point to color.";
+   divs.infoDiv.innerHTML="<br>Points closer together tend to take about the same number of iterations, resulting in them being painted the same color. Of course, a fractal gets interesting when this general rule is broken.";
+   switch (drawing.lastPoint%3) {
+    case 2:
+     text("Try this point!",-0.85,-0.27,drawing.cPlane);
+     circle(-0.77,-0.17,0.03,drawing.cPlane,{fillStyle:"blue"});
+     break
+    case 0:
+     text("Try this point!",-0.58,0.57,drawing.cPlane);
+     circle(-0.13,0.6,0.03,drawing.cPlane,{fillStyle:"black"});
+     break
+    case 1:
+     text("Try this point!",0.56,0.08,drawing.cPlane);
+     circle(0.5,0.1,0.03,drawing.cPlane,{fillStyle:"red"});
+     break
+   }
+  } else if (state.fractalType==="julia") {
+   divs.primeDiv.innerHTML="Click on a new point to color.";
+   divs.infoDiv.innerHTML="<br>Points closer together tend to take about the same number of iterations, resulting in them being painted the same color. Of course, a fractal gets interesting when this general rule gets broken.";
+  }
+  canvas.onclick=function(event) {
+   var coords=canvasCoords(event,canvas)
+   if (state.fractalType==="julia" && drawing.lastPoint===1 && z.c===undefined) { //just clicked first point in julia set
+    drawing.steps=[];
+    drawing.steps[0]=draw(setup,true,drawing.cPlane);
+    drawing.lastPoint=0;
+   }
+   choosePoint(coords.x,coords.y,drawing,state,z,instructions,canvas)
+  }
+ }
+}
+
+function relMouseCoords(event, element){
+    var totalOffsetX = 0;
+    var totalOffsetY = 0;
+    var currentElement = element;
+    do {
+        totalOffsetX += currentElement.offsetLeft;
+        totalOffsetY += currentElement.offsetTop;
+    } while(currentElement = currentElement.offsetParent)
+    var relativeX = event.clientX - totalOffsetX+window.pageXOffset;
+  var relativeY = event.clientY - totalOffsetY+window.pageYOffset;
+    return {x:relativeX, y:relativeY}
+}
+
+function canvasCoords(event, canvas) {
+ var coords=relMouseCoords(event, canvas);
+ var canvasX=(coords.x-ORIGIN_OFFSET)/PX_PER_UNIT;
+ var canvasY=-(coords.y-ORIGIN_OFFSET)/PX_PER_UNIT;
+ return {x:canvasX,y:canvasY}
+}
+
+function animatePointToButtons(drawing) {
+ stopAnimation(drawing)
+ var DURATION = 800;
+ var tryButtonText1=draw(text,false,"Try this button!", -1.45,1.1,drawing.cPlane,"bold 14px Arial",{fillStyle:"black"});
+ var arrow1=draw(arrow,false,-1.47,1.0,-1.5,1.15,drawing.cPlane,DRAWSTYLES.zn)
+ var tryButtonText2=draw(text,false,"Try this button!", -1.65,1.3,drawing.cPlane,"bold 14px Arial",{fillStyle:"black"});
+ var arrow2=draw(arrow,false,-1.67,1.25,-1.7,1.4,drawing.cPlane,DRAWSTYLES.zn)
+ animate(DURATION,drawing,tryButtonText1,tryButtonText2,arrow1, arrow2);
+}
+
+function choosePoint(x,y,drawing,state,z,instructions,canvas){ 
+ var DURATION=300;
+ $(instructions).slideUp("fast");
+ //calculations
+ if (state.fractalType==="mandelbrot") {
+  z.c=new CNum(x,y);
+  z.n=1;
+  z.zero=new CNum(x,y);
+  z.i=new CNum(x,y);
+  var arrowStyle = DRAWSTYLES.zc;
+ } else if (state.fractalType==="julia" && drawing.steps.length===1) { //first move in a julia set
+  z.c=new CNum(x,y);
+  drawing.lastPoint+=2;
+  var arrowStyle = DRAWSTYLES.zc;
+ } else { // julia set, later moves.
+  var arrowStyle = DRAWSTYLES.zn;
+  z.n=1;
+  z.zero=new CNum(x,y);
+  z.i=new CNum(x,y);
+ }
+ //canvas animation
+ //var skipReminder=draw(text,false,"Click anywhere to skip to the end",-1.05,-1.7,drawing.cPlane,"bold 12px Arial",{fillStyle:"blue"})
+ var startArrow=draw(arrow,false,0,0,0,0,drawing.cPlane,arrowStyle);
+ var endArrow=draw(arrow,false,0,0,x,y,drawing.cPlane,arrowStyle); 
+ drawing.tempSteps.push(endArrow);
+ drawing.addSteps.push(endArrow);
+ var startDot=draw(circle,false,x,y,10/PX_PER_UNIT,drawing.cPlane,{fillStyle:"black"});
+ var endDot=draw(circle,false,x,y,1.5/PX_PER_UNIT,drawing.cPlane,{fillStyle:"black"});
+ drawing.tempSteps.push(endDot);
+ drawing.addSteps.push(endDot);
+ animate(DURATION,drawing, startArrow, endArrow, startDot, endDot/*, skipReminder, skipReminder*/);
+
+ function end(drawing,state,z,instructions,canvas){
+  function newInstructions(drawing,state,z,instructions,canvas){
+   var divs=instructionsSetup(instructions);
+   divs.primeDiv.innerHTML="We will now perform one ITERATION on this point. This consists of three steps: rotation, dilation, and translation. Each step will move our point to a new location according to a pattern. Look for the moving BLUE arrow, which will track our point as it moves through the steps.";
+   divs.infoDiv.innerHTML="<br>The color of each point is determined by the number of iterations that it takes to escape far beyond the canvas. Each iteration consists of three steps: rotation, dilation, and translation:<br><br><img src='http://4.bp.blogspot.com/-MLiBIREuff0/VEjHP0ezhiI/AAAAAAAAA1s/kwWwJiUeDtM/s1600/iteration%2Bsteps%2Bcropped.png' style='display:block;margin-left:auto;margin-right:auto'></img><br>The rotation step simply rotates our point about the origin, until it doubles the angle that our point makes with the positive x axis. In the picture above, this step rotates our point from the tip of the red arrow to the tip of the straight gold arrow.<br><br>The dilation step squares the length of the arrow. The black circle in the picture has a radius of 1. A number greater than 1 gets bigger when it's squared, whereas a number less than 1 gets smaller. So arrows outside the circle get longer, and arrows inside get shorter. In the picture above, this step takes our point from the tip of the gold arrow to the tip of the green arrow.<br><br>The translation step moves our point by the same magnitude and direction as the red arrow. The red arrow is slid over (which is shown as the pink arrow above) to the tip of the green arrow, then our point is moved along it. So in the picture above, this step takes our point from the tip of the green arrow to the tip of the pink arrow. That completes one iteration.<br><br>Under the hood, this is all accomplished with math using complex numbers. Look it up!";
+   if (state.allowFastPlay) {
+    var endButton=makeButton("Do all the iterations", divs.buttonDiv)
+    endButton.onclick=function(){
+     state.fastPlay=true;
+     canvas.onclick=function(){state.skipAll=true};
+     iterate(drawing,state,z,instructions,canvas)
+    }
+   } 
+   var nextButton=makeButton("Show iteration #"+(z.n), divs.buttonDiv);
+   nextButton.onclick=function(){iterate(drawing,state,z,instructions,canvas,true)}
+  }
+  $(instructions).stop(false,true);
+  wrapUp(drawing);
+  if (state.fractalType==="julia" && drawing.steps.length===3) { // just chose z.c in julia set
+   $(instructions).slideUp("fast",function(){
+    var divs=instructionsSetup(instructions);
+    divs.primeDiv.innerHTML="Which points should we color next?";
+    divs.infoDiv.innerHTML="<br>'A new point' will explain the procedure for determining the color of a single point, focusing on the three steps of each iteration, and how the number of iterations determine the color of the point.<br><br>'Some random points' will color many scattered random points very quickly.<br><br>'Points in a small area' will allow you to color the points in a small area, producing a mosaic pattern in which a part of the whole fractal can be discerned.<br><br>'Every single point' will color every point on the canvas, at a much higher resolution than the 'Points in a small area' button. This will display the full fractal."
+    whatNextUISetup(divs.buttonDiv,drawing,state,z,instructions,canvas)
+    $(instructions).slideDown("fast")
+   })
+  } else {
+   newInstructions(drawing,state,z,instructions,canvas);
+   $(instructions).slideDown("fast");
+   canvas.onclick=function(){animatePointToButtons(drawing)}
+  }
+ }
+ 
+ canvas.onclick=function(){end(drawing,state,z,instructions,canvas)};
+ drawing.waitingToDraw.push(setTimeout(function(){end(drawing,state,z,instructions,canvas)},DURATION*1.02));
+}
+
+function whatNextUISetup(buttonDiv,drawing,state,z,instructions,canvas) { // sets up buttons and mouse clicks for some cases. does not reset instructions
+ if (state.allowAllPaint) {
+  var fullFractalButton=makeButton("Every single point", buttonDiv)
+  fullFractalButton.onclick=function(){allPoints(drawing,state,z,instructions,canvas)}
+ }
+ if (state.allowAreaPaint) {
+  var pointsInBoxButton=makeButton("Points in a small area", buttonDiv)
+  pointsInBoxButton.onclick=function(){
+   state.allowAllPaint=true;
+   $(instructions).slideUp("fast",function(){
+    var divs=instructionsSetup(instructions);
+    divs.primeDiv.innerHTML="Choose an area to color the points in it. Try an area that includes differently colored points.";
+    $(divs.buttonDiv).empty();
+    $(instructions).slideDown("fast")
+    var area=document.createElement("IMG")
+    area.src="http://2.bp.blogspot.com/-Pq5EUjFMx9o/VEjHPprtcDI/AAAAAAAAA1o/Psz9Jd3Hi9g/s1600/blackborder.png";
+    area.style.position="absolute";
+    area.height=canvas.height/10;
+    area.width=canvas.width/10;
+    postBody.appendChild(area);
+    postBody.onmousemove=function(event){
+     var coords=relMouseCoords(event, canvas);
+     if (0<=coords.x && coords.x<=canvas.width && 0<=coords.y && coords.y<=canvas.height) {
+      area.style.top=(coords.y-area.height/2)+"px";
+      area.style.left=(coords.x-area.width/2)+"px";
+     }
+    }
+    area.onclick=function(event){
+     var pixCoords=relMouseCoords(event, canvas)
+     if (0<=pixCoords.x && pixCoords.x<=canvas.width && 0<=pixCoords.y && pixCoords.y<=canvas.height) {
+      postBody.onmousemove=function(){}
+      area.parentNode.removeChild(area);
+      var canvasX=(pixCoords.x-ORIGIN_OFFSET)/PX_PER_UNIT;
+      var canvasY=-(pixCoords.y-ORIGIN_OFFSET)/PX_PER_UNIT;
+      manyPoints(drawing,state,z,instructions,canvas,canvasX,canvasY)
+     }
+    }
+   })
+  }
+ }
+ if (drawing.lastPoint >=4 || state.allowManyPoints) {
+  state.allowManyPoints=true;
+  var manyPointsButton=makeButton("Some random points", buttonDiv);
+  manyPointsButton.onclick=function(){
+   state.allowAreaPaint=true;
+   manyPoints(drawing,state,z,instructions,canvas)
+  }
+ }
+ var pointButton=makeButton("A new point", buttonDiv) // always available
+ pointButton.onclick=function(){
+  drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+  wrapUp(drawing);
+  firstPointInstuctions(drawing,state,z,instructions,canvas);
+ } //needs work
+
+ canvas.onclick=function(event) { // allows clicks directly on canvas
+  var coords=canvasCoords(event,canvas);
+  onePoint(200,coords.x,coords.y,drawing,state,z,instructions,canvas);
+  setTimeout(function(){animatePointToButtons(drawing)},220)
+ }
+
+}
+
+function removeSteps(toRemove,drawing) {
+ for (var i=0;i<toRemove.length;i++) {
+  do {
+   var j=drawing.steps.indexOf(toRemove[i]);
+   if (j!==-1) {drawing.steps.splice(j,1)}
+  } while (j!==-1)
+ }
+}
+
+function iterate(drawing,state,z,instructions,canvas) { 
+ $(instructions).slideUp("fast");
+ var DURATION;
+ var DOT_DURATION;
+ if (state.fastPlay && state.skipAll) {
+  DURATION=0;
+  DOT_DURATION=0;
+ } else if (state.fastPlay===undefined) {
+  DURATION=40000
+  DOT_DURATION=1000;
+  state.fastPlay=false;
+ } else if (state.fastPlay) {
+  DURATION=18000/(Math.pow(z.n,1.5)+10);
+  DOT_DURATION=1000;
+ } else {
+  DURATION=4000;
+  DOT_DURATION=1000;
+ }
+
+ var textSkipReminder=draw(text,false,"Click anywhere to skip to the end",-1.68,-1.3,drawing.cPlane,"bold 13px Arial",{fillStyle:"black"});
+ var iterationCounter=draw(text,false,"Iteration #"+z.n+":",1.1,0.15,drawing.cPlane,"bold 14px Arial",{fillStyle:z.getColor()});
+ var shortTextRotating=draw(text,false,"Rotation...",1.1,0.05,drawing.cPlane,"bold 14px Arial",DRAWSTYLES.rotationStep);
+ var shortTextDilating=draw(text,false,"Dilation...",1.1,0.05,drawing.cPlane,"bold 14px Arial",DRAWSTYLES.dilationStep);
+ var shortTextTranslating=draw(text,false,"Translation...",1.1,0.05,drawing.cPlane,"bold 14px Arial",DRAWSTYLES.translationStep);
+ var textDone=draw(text,false,"Done!",1.1,0.05,drawing.cPlane,"bold 14px Arial",{fillStyle:z.getColor()});
+ 
+ var textRotating=draw(text,false,"Step 1 - Rotation: Turn the arrow until we double the angle it makes with the positive x axis.",-1.68,-1.4,drawing.cPlane,"bold 13px Arial",DRAWSTYLES.rotationStep);
+ var textDilating=draw(text,false,"Step 2 - Dilation: Square its length. This makes short arrows shorter, and long arrows longer.",-1.68,-1.5,drawing.cPlane,"bold 13px Arial",DRAWSTYLES.dilationStep);
+ var textTranslating=draw(text,false,"Step 3 - Translation: Slide the tip by using the direction and length of the red arrow.",-1.68,-1.6,drawing.cPlane,"bold 13px Arial",DRAWSTYLES.translationStep);
+ 
+ var startArc=draw(arcArrow,false,z.i.r()*0.8,0,drawing.cPlane,DRAWSTYLES.rotationStep);
+ var midArc=draw(arcArrow,false,z.i.r()*0.8,z.i.theta(),drawing.cPlane,DRAWSTYLES.rotationStep);
+ var endArc=draw(arcArrow,false,z.i.r()*0.8,z.i.theta()*2,drawing.cPlane,DRAWSTYLES.rotationStep);
+ var znUnrotated=draw(rArrow,false,z.i.r(),z.i.theta(),drawing.cPlane,DRAWSTYLES.z);
+ var znRotated=draw(rArrow,false,z.i.r(),z.i.theta()*2,drawing.cPlane,DRAWSTYLES.z);
+ var znRotatedGhost=draw(rArrow,false,z.i.r(),z.i.theta()*2,drawing.cPlane,DRAWSTYLES.rotationStep);
+ drawing.steps.push(iterationCounter);
+ drawing.steps.push(textRotating);
+ if (!state.skipAll) {drawing.steps.push(textSkipReminder)}
+ animate(DURATION*1.5/8*1.00,drawing,startArc,midArc,shortTextRotating,shortTextRotating)
+ drawing.waitingToDraw.push(setTimeout(function(){
+  animate(DURATION*1.5/8*1.00,drawing,znUnrotated,znRotated,midArc,endArc,shortTextRotating,shortTextRotating)
+ },DURATION*1.5/8*1.005));
+
+ z.f=z.i.square();
+ var znUndilated=draw(rArrow,false,z.i.r(),z.f.theta(),drawing.cPlane,DRAWSTYLES.z);
+ var znDilated=draw(rArrow,false,z.f.r(),z.f.theta(),drawing.cPlane,DRAWSTYLES.z);
+ var znDilatedGhost=draw(rArrow,false,z.f.r(),z.f.theta(),drawing.cPlane,DRAWSTYLES.dilationStep);
+ drawing.waitingToDraw.push(setTimeout(function(){
+  drawing.steps.push(textDilating)
+  drawing.steps.push(znRotatedGhost);
+  drawing.steps.push(endArc);
+  animate(DURATION*2/8*1.00,drawing,znUndilated,znDilated,shortTextDilating,shortTextDilating)
+ },DURATION*3/8*1.01));
+
+ var znUntranslated=draw(arrow,false,0,0, z.f.a, z.f.b, drawing.cPlane,DRAWSTYLES.z);
+ var moveC=draw(arrow,false,0,0, z.c.a, z.c.b, drawing.cPlane,DRAWSTYLES.translationStep);
+ var movedC=draw(arrow,false,z.f.a, z.f.b, z.c.a+z.f.a, z.c.b+z.f.b, drawing.cPlane,DRAWSTYLES.translationStep);
+ drawing.waitingToDraw.push(setTimeout(function(){
+  drawing.steps.push(textTranslating)
+  drawing.steps.push(znDilatedGhost);
+  animate(DURATION*0.7/8*1.00,drawing,moveC,movedC,znUntranslated,znUntranslated,shortTextTranslating,shortTextTranslating)
+ },DURATION*5/8*1.015));
+
+ var znUntranslatedHelper=draw(arrow,false,0,0, z.f.a, z.f.b, drawing.cPlane,DRAWSTYLES.helper);
+ var endZn=draw(arrow,false,0,0, z.c.a+z.f.a, z.c.b+z.f.b, drawing.cPlane,DRAWSTYLES.zn);
+ drawing.waitingToDraw.push(setTimeout(function(){
+  drawing.steps.push(movedC);
+  animate(DURATION*2.3/8*1.00,drawing,znUntranslated,endZn,movedC,movedC,znUntranslatedHelper,znUntranslatedHelper,shortTextTranslating,shortTextTranslating)
+ },DURATION*5.7/8*1.02));
+
+ var fromTo=draw(arrow,false, z.i.a, z.i.b, z.c.a+z.f.a, z.c.b+z.f.b, drawing.cPlane,DRAWSTYLES.helper);
+ drawing.addSteps.push(endZn);
+ drawing.tempSteps.push(endZn);
+ drawing.addSteps.push(fromTo);
+ drawing.tempSteps.push(fromTo);
+
+
+ if (!state.fastPlay) {
+  drawing.tempSteps.push(znRotatedGhost);
+  drawing.tempSteps.push(endArc);
+  drawing.tempSteps.push(znDilatedGhost);
+  drawing.tempSteps.push(movedC);
+  drawing.tempSteps.push(iterationCounter);
+  drawing.tempSteps.push(textDone);
+  drawing.tempSteps.push(textRotating);
+  drawing.tempSteps.push(textDilating);
+  drawing.tempSteps.push(textTranslating);
+ }
+ 
+
+ z.i=new CNum(z.c.a+z.f.a, z.c.b+z.f.b);
+ z.f=new CNum(z.c.a+z.f.a, z.c.b+z.f.b);
+ z.n++;
+ // possibilities: fast or once, escape, max, or keepgoing - 6 possibilities total
+
+ if (state.fastPlay && !z.escaped() && z.n<=z.maxN) { //fast, keepgoing. will not wrap up. will not click to finish faster, will not run end.
+  drawing.waitingToDraw.push(setTimeout(function() {
+   var toRemove=[znRotatedGhost,endArc,znDilatedGhost,movedC,iterationCounter,textRotating,textDilating,textTranslating,textSkipReminder];
+   removeSteps(toRemove,drawing)   
+   iterate(drawing,state,z,instructions,canvas);
+   drawing.steps.push(endZn);
+   drawing.steps.push(fromTo);
+  },DURATION))
+  return
+ }
+
+ //once, keepgoing needs no special treatment.
+ if (z.escaped() || z.n>z.maxN) { //escape or max, wether fast or slow. applies to 4/6.
+  z.n--;
+  state.fastPlay=false;
+  state.skipAll=false; 
+  var color=z.getColor();
+  var startDot=draw(circle,false, z.zero.a, z.zero.b, 80/PX_PER_UNIT,drawing.cPlane,{fillStyle:color});
+  var endDot=draw(circle,false, z.zero.a, z.zero.b, 1.5/PX_PER_UNIT,drawing.cPlane,{fillStyle:color});
+  var xQuad=0.9*z.zero.a/(Math.abs(z.zero.a)+0.001)-0.60;// putting x,y to the right quadrant
+  var yQuad=1.1*z.zero.b/(Math.abs(z.zero.b)+0.001);//0.001 to prevent div by zero.
+  var iterationCounterQ=draw(text,false,z.n+" iterations, so we color it "+z.getColor()+".",xQuad,yQuad,drawing.cPlane,"bold 14px Arial",{fillStyle:color});
+  var endCircle=draw(circle,false, z.zero.a, z.zero.b, 15/PX_PER_UNIT,drawing.cPlane,{fillStyle:"transparent", strokeStyle:color, lineWidth:1/PX_PER_UNIT});
+  drawing.tempSteps.push(endDot);
+  drawing.tempSteps.push(iterationCounterQ);
+  drawing.waitingToDraw.push(setTimeout(function(){
+   drawing.steps.splice(drawing.lastPoint+1,0,endDot);
+   drawing.lastPoint++;
+   drawing.tempSteps.push(iterationCounter);
+   drawing.steps.push(fromTo);
+   drawing.steps.push(iterationCounterQ);
+   drawing.steps.push(textDone);
+   drawing.steps.push(endZn);
+   drawing.steps.push(endCircle);
+   animate(DOT_DURATION,drawing,startDot,endDot,iterationCounterQ,iterationCounterQ)
+  },DURATION*1.025));
+  DURATION+=DOT_DURATION;
+ }
+
+ function end(drawing,state,z,instructions,canvas){ 
+  function newInstructions(drawing,state,z,instructions,canvas){
+   var divs=instructionsSetup(instructions);
+   if (z.escaped() || z.n>=z.maxN) { // got color for a point, end of literations
+    if (z.escaped()) {
+     divs.primeDiv.innerHTML="The point escaped from the canvas in <b><span style='color:" +z.getColor()+"'>"+z.n+"</span></b> iterations, so we color it <b><span style='color:" +z.getColor()+"'>"+z.getColor().toUpperCase()+"</span></b>. The whole fractal is drawn by coloring every point on the canvas in this way.";
+    } else {
+     divs.primeDiv.innerHTML="The point DIDN'T escape even after <b><span style='color:" +z.getColor()+"'>"+z.n+"</span></b> iterations, so we color it <b><span style='color:" +z.getColor()+"'>"+z.getColor().toUpperCase()+"</span></b>. The whole fractal is drawn by coloring every point on the canvas in this way.";
+    }
+    if (state.allowManyPoints || drawing.lastPoint >=4) {
+     divs.primeDiv.innerHTML+=" Which point(s) should we color next?";
+    } else {
+     divs.primeDiv.innerHTML+=" Let's choose \"A new point\" to color!";
+    }
+    divs.infoDiv.innerHTML="<br>Escaping means more than just barely going beyond the edge of the canvas. The point needs to be moved a good distance away from the origin, at least more than 2 units away. So sometimes you'll see the escape take one more iteration than you expected.<br><br>After you color a few points, you will unlock the 'Some random points' button, which lets you color many scattered random points very quickly. Try it when it pops up! It will unlock more buttons!<br><br>In addition, try clicking anywhere on the canvas. This will instantly show the results of all the iterations on that point, and also determine its color.";
+    whatNextUISetup(divs.buttonDiv,drawing,state,z,instructions,canvas);
+
+   } else { // once, keepgoing.
+    if (z.n%2===1) {
+     divs.primeDiv.innerHTML="We continue to perform iterations on our point, moving it through the three steps: rotation, dilation, and translation. Click the 'More info...' button to learn more about iterations.";
+     divs.infoDiv.innerHTML="<br>The color of each point is determined by the number of iterations that it takes to escape far beyond the canvas. Each iteration consists of three steps: rotation, dilation, and translation:<br><br><img src='http://4.bp.blogspot.com/-MLiBIREuff0/VEjHP0ezhiI/AAAAAAAAA1s/kwWwJiUeDtM/s1600/iteration%2Bsteps%2Bcropped.png' style='display:block;margin-left:auto;margin-right:auto'></img><br>The rotation step simply rotates our point about the origin, until it doubles the angle that our point makes with the positive x axis. In the picture above, this step rotates our point from the tip of the red arrow to the tip of the straight gold arrow.<br><br>The dilation step squares the length of the arrow. The black circle in the picture has a radius of 1. A number greater than 1 gets bigger when it's squared, whereas a number less than 1 gets smaller. So arrows outside the circle get longer, and arrows inside get shorter. In the picture above, this step takes our point from the tip of the gold arrow to the tip of the green arrow.<br><br>The translation step moves our point by the same magnitude and direction as the red arrow. The red arrow is slid over (which is shown as the pink arrow above) to the tip of the green arrow, then our point is moved along it. So in the picture above, this step takes our point from the tip of the green arrow to the tip of the pink arrow. That completes one iteration.<br><br>Under the hood, this is all accomplished with math using complex numbers. Look it up!";
+    } else {
+     divs.primeDiv.innerHTML="We repeat the iterations over and over until our point ESCAPES by moving far outside the canvas. The number of iterations needed to escape determines the color of our initial point.";
+     divs.infoDiv.innerHTML="<br>The color of each point is determined by the number of iterations that it takes to escape far beyond the canvas. Each iteration consists of three steps: rotation, dilation, and translation:<br><br><img src='http://4.bp.blogspot.com/-MLiBIREuff0/VEjHP0ezhiI/AAAAAAAAA1s/kwWwJiUeDtM/s1600/iteration%2Bsteps%2Bcropped.png' style='display:block;margin-left:auto;margin-right:auto'></img><br>The rotation step simply rotates our point about the origin, until it doubles the angle that our point makes with the positive x axis. In the picture above, this step rotates our point from the tip of the red arrow to the tip of the straight gold arrow.<br><br>The dilation step squares the length of the arrow. The black circle in the picture has a radius of 1. A number greater than 1 gets bigger when it's squared, whereas a number less than 1 gets smaller. So arrows outside the circle get longer, and arrows inside get shorter. In the picture above, this step takes our point from the tip of the gold arrow to the tip of the green arrow.<br><br>The translation step moves our point by the same magnitude and direction as the red arrow. The red arrow is slid over (which is shown as the pink arrow above) to the tip of the green arrow, then our point is moved along it. So in the picture above, this step takes our point from the tip of the green arrow to the tip of the pink arrow. That completes one iteration.<br><br>Under the hood, this is all accomplished with math using complex numbers. Look it up!";
+    }
+
+    if (z.n>2 || state.allowFastPlay) {
+     var endButton=makeButton("Do all the iterations", divs.buttonDiv);
+     endButton.onclick=function(){
+      state.allowFastPlay=true;
+      state.fastPlay=true;
+      iterate(drawing,state,z,instructions,canvas);
+      removeSteps([textSkipReminder],drawing)
+      canvas.onclick=function(){state.skipAll=true;};
+     }
+    }
+    var nextButton=makeButton("Show iteration #"+(z.n)+", very slowly", divs.buttonDiv);
+    nextButton.onclick=function(){
+     state.fastPlay=undefined;
+     iterate(drawing,state,z,instructions,canvas,true)
+    }
+    var nextButton=makeButton("Show iteration #"+(z.n), divs.buttonDiv);
+    nextButton.onclick=function(){iterate(drawing,state,z,instructions,canvas)}
+    
+    canvas.onclick=function(){animatePointToButtons(drawing)}
+   }
+  }
+
+  var toRemove=[znRotatedGhost,endArc,znDilatedGhost,movedC,iterationCounter,textRotating,textDilating,textTranslating,textSkipReminder];
+  removeSteps(toRemove,drawing)
+
+  $(instructions).stop(false,true);
+  newInstructions(drawing,state,z,instructions,canvas);
+  $(instructions).slideDown("fast"); 
+  wrapUp(drawing);
+ }
+ canvas.onclick=function(){end(drawing,state,z,instructions,canvas)};
+ drawing.waitingToDraw.push(setTimeout(function(){end(drawing,state,z,instructions,canvas)},DURATION*1.03));
+}
+
+
+function onePoint(duration,x,y,drawing,state,z,instructions,canvas) {
+ drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+ z.n=0;
+ z.zero=new CNum(x,y);
+ z.i=new CNum(0,0);
+ z.f=new CNum(x,y);
+ if (state.fractalType==="mandelbrot") {
+  z.c=new CNum(x,y);
+  z.n++;
+  cArrow=draw(arrow,false,0,0,x,y,drawing.cPlane,DRAWSTYLES.zc);
+  drawing.steps.push(cArrow);
+ } else if (state.fractalType==="julia") {
+  z.n++
+  cArrow=draw(arrow,false,0,0,x,y,drawing.cPlane,DRAWSTYLES.zn);
+  drawing.steps.push(cArrow);
+ }
+ while (!z.escaped() && z.n<=z.maxN) {
+  z.i=new CNum(z.f.a,z.f.b);
+  z.nextZf();
+  znArrow=draw(arrow,false,0,0,z.f.a,z.f.b,drawing.cPlane,DRAWSTYLES.zn);
+  fromToArrow=draw(arrow,false,z.i.a,z.i.b,z.f.a,z.f.b,drawing.cPlane,DRAWSTYLES.helper);
+  drawing.steps.push(znArrow);
+  drawing.steps.push(fromToArrow);
+ }
+ z.n--;
+ var color=z.getColor();
+ var startDot=draw(circle,false, z.zero.a, z.zero.b, 80/PX_PER_UNIT,drawing.cPlane,{fillStyle:color});
+ var endDot=draw(circle,false, z.zero.a, z.zero.b, 1.5/PX_PER_UNIT,drawing.cPlane,{fillStyle:color});
+ var xQuad=0.9*x/(Math.abs(x)+0.001)-0.60;// putting x,y to the right quadrant
+ var yQuad=1.1*y/(Math.abs(y)+0.001);//0.001 to prevent div by zero.
+ var iterationCounterQ=draw(text,false,z.n+" iterations, so we color it "+z.getColor()+".",xQuad,yQuad,drawing.cPlane,"bold 14px Arial",{fillStyle:z.getColor()});
+ var endCircle=draw(circle,false, z.zero.a, z.zero.b, 15/PX_PER_UNIT,drawing.cPlane,{fillStyle:"transparent", strokeStyle:color, lineWidth:1/PX_PER_UNIT});
+ drawing.steps.push(endCircle);
+ drawing.steps.push(iterationCounterQ);
+ drawing.steps.splice(drawing.lastPoint+1,0,endDot);
+ drawing.lastPoint++;
+ animate(duration,drawing,startDot,endDot,iterationCounterQ,iterationCounterQ);
+ drawing.waitingToDraw.push(setTimeout(function(){wrapUp(drawing)},duration*1.02));
+}
+
+function multipleAnimate(n,drawing,state,z,instructions,canvas,callbackfn,x,y) {
+ var duration;
+ if (state.skipAll) {
+  if (typeof y==="number") {
+   duration=0;
+  } else {
+   duration=1;
+  }
+ } else {
+  duration=4000/Math.pow((403-n),1.2);
+  if (duration<35 && typeof y==="number") {duration=0}
+ }
+ 
+ if (n%60===0 && n<200 && state.skipAll) { //speeds things up a bit
+  flattenDrawing(drawing,canvas)
+ }
+ 
+
+ if (n<=0) {
+  callbackfn();
+  //end(drawing,state,z,instructions,canvas)
+  return
+ } else {
+  if (y===undefined) {
+   n-=2.5;
+  } else {
+   n--;
+  }
+ }
+ 
+ if (typeof y==="number") { // assume that n is 400, which is 20x20, which is what it's hard-coded as right now.
+  var canvasX=-(n%20-9.5)*0.016+x;
+  var canvasY=(Math.floor(n/20)-9.5)*0.016+y;
+ } else {
+  var canvasX=(Math.random()-0.62)*1.45*2;
+  var canvasY=(Math.random()-0.47)*1.45*2;
+ }
+ onePoint(duration,canvasX,canvasY,drawing,state,z,instructions,canvas);
+ setTimeout(function(){multipleAnimate(n,drawing,state,z,instructions,canvas,callbackfn,x,y)},duration*1.04);
+}
+
+function flattenDrawing(drawing,canvas) {
+ drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+ wrapUp(drawing);
+ var imgData=drawing.cPlane.getImageData(0,0,canvas.width,canvas.height);
+ var flattenedPoints=draw(putImgData,false,drawing.cPlane,imgData);
+ drawing.steps=drawing.steps.slice(0,1);
+ drawing.steps.push(flattenedPoints);
+ drawing.lastPoint=1;
+}
+
+function manyPoints(drawing,state,z,instructions,canvas,x,y) {
+ $(instructions).slideUp("fast");
+ var textSkipReminder=draw(text,false,"Click anywhere to fast forward",-1.68,-1.5,drawing.cPlane,"bold 13px Arial",{fillStyle:"black"});
+ drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+ drawing.steps.push(textSkipReminder);
+ drawing.lastPoint++
+ canvas.onclick=function(){
+  state.skipAll=true;
+  removeSteps([textSkipReminder],drawing);
+  drawing.lastPoint--;
+ }
+ 
+ multipleAnimate(400,drawing,state,z,instructions,canvas,function(){end(drawing,state,z,instructions,canvas)},x,y);
+ //end(drawing,state,z,instructions,canvas)
+ function end(drawing,state,z,instructions,canvas) {
+  function newInstructions(drawing,state,z,instructions,canvas){
+   var divs=instructionsSetup(instructions);
+   divs.primeDiv.innerHTML="We've colored some more points. Which points should we color next?";
+   if (!state.allowAllPaint) {divs.primeDiv.innerHTML+=" Try the new buttons!"}
+   divs.infoDiv.innerHTML="<br>'A new point' will explain the procedure for determining the color of a single point, focusing on the three steps of each iteration, and how the number of iterations determine the color of the point.<br><br>'Some random points' will color many scattered random points very quickly.<br><br>'Points in a small area' will allow you to color the points in a small area, producing a mosaic pattern in which a part of the whole fractal can be discerned.<br><br>'Every single point' will color every point on the canvas, at a much higher resolution than the 'Points in a small area' button. This will display the full fractal.<br><br>These buttons are unlocked as you try new buttons. Keep trying new things until you see the full fractal!";
+   whatNextUISetup(divs.buttonDiv,drawing,state,z,instructions,canvas);
+  }
+  drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+  if (!state.skipAll) {
+   removeSteps([textSkipReminder],drawing);
+   drawing.lastPoint--;
+  }
+  flattenDrawing(drawing,canvas);
+  state.skipAll=false;
+  newInstructions(drawing,state,z,instructions,canvas);
+  $(instructions).slideDown("fast");
+ }
+ 
+}
+
+function allPoints(drawing,state,z,instructions,canvas, zoomLvl,centerX,centerY) {
+ $(instructions).slideUp("fast");
+ drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+ wrapUp(drawing);
+ if (zoomLvl===undefined) {zoomLvl=0}
+ if (centerX===undefined) {centerX=0}
+ if (centerY===undefined) {centerY=0}
+
+ /*
+ good numbers to try
+ zoomLvl=11
+ centerX=-0.10889987075
+ centerY=0.90100003799
+ */
+
+ canvas.onclick=function(){}
+ var zoomFactor=Math.pow(10,zoomLvl)
+ var tempPixelPerUnit=PX_PER_UNIT*zoomFactor
+ z.maxN=50+50*zoomLvl
+
+ var x;
+ var y;
+ function fullIterate(z,x,y) {
+  z.f=new CNum(x,y);
+  z.n=0;
+  if (state.fractalType==="mandelbrot") {z.c=new CNum(x,y)}  
+  while (!z.escaped() && z.n<=z.maxN) {z.nextZf()}
+ }
+
+ var imgData=drawing.cPlane.createImageData(canvas.height,canvas.width);
+ var tempN;
+ var rgb;
+ var k;
+ for (var i=0;i<canvas.width;i++) {
+  for (var j=0;j<canvas.height;j++) {
+   x=(i-ORIGIN_OFFSET)/tempPixelPerUnit+centerX;
+   y=-(j-ORIGIN_OFFSET)/tempPixelPerUnit+centerY;
+   fullIterate(z,x,y);
+   if (zoomLvl>0) { // color changer for higher zoom
+    if (z.n>z.maxN) {
+     tempN=z.n;
+    } else if (z.n>z.maxN*(1-0.8/(zoomLvl+4))) {
+     tempN=26;
+    } else if (z.n>z.maxN*(1-1.6/(zoomLvl+4))) {
+     tempN=15;
+    } else if (z.n>z.maxN*(1-2.4/(zoomLvl+4))) {
+     tempN=10;
+    } else {
+     tempN=Math.ceil((z.n%12+1)/2)
+    }
+    z.n=tempN;
+   }
+   rgb=z.getRGB();
+   k=(i+j*canvas.width)*4
+   imgData.data[k]=rgb[0];
+   imgData.data[k+1]=rgb[1];
+   imgData.data[k+2]=rgb[2];
+   imgData.data[k+3]=255;
+  }
+ }
+ drawing.cPlane.putImageData(imgData,0,0);
+ if (zoomLvl===0 && state.fractalType==="mandelbrot") {
+  for (var i=3;i<imgData.data.length;i+=4) {
+   imgData.data[i]=25;
+  }
+  drawing.juliaBackground=draw(putImgData,false,drawing.cPlane,imgData)
+ }
+ //var flattenedPoints=draw(putImgData,false,drawing.cPlane,imgData);
+
+
+ newInstructions(drawing,state,z,instructions,canvas);
+ 
+ function newInstructions(drawing,state,z,instructions,canvas){
+  var divs=instructionsSetup(instructions);
+  if (zoomLvl===0) {
+   divs.primeDiv.innerHTML="We colored all the points, generating the full fractal. Try ZOOMING IN on the details!";
+   divs.infoDiv.innerHTML="<br>Try the 'Zoom in' button! One of the defining features of a fractal is that they are infinitely detailed: no matter how far you zoom in on the edges, there are still smaller details to be seen. The patterns found therein are intricate and beautiful. You can see a portion of these infinite details by zooming in!<br><br>'Start a new fractal' lets you start from the beginning on a Mandelbrot set fractal, or a Julia set fractal. The Mandelbrot set is the one that we first started on. But the Julia set is a whole collection of fractals, each one looking different than the other.<br><br>'Go back to discrete points' will send you back to the mode where you can see the colors on a point-by-point basis. Compare the colors of the points there, to the colors in the full fractal, and you'll see that they match up.";
+  } else if (zoomLvl<13) {
+   if (zoomLvl%2===0) {
+    divs.primeDiv.innerHTML="Fractals are infinitely detailed: no matter how far you zoom in, there're more details to be seen.";
+   } else {
+    divs.primeDiv.innerHTML="Be sure to also TRY THE JULIA SET fractals. Choose 'Start a new fractal' then 'New Julia set'.";
+   }
+   divs.infoDiv.innerHTML="<br>Every time we zoom in, we must display finer details. This is accomplished by increasing the maximum number of iterations we perform before we give up on a point ever escaping. Ideally, the points colored black would NEVER escape, even after an INFINITE number of iterations. This is obviously infeasible to implement in a program. So instead we color a point black if it hasn't escaped after some maximum number of iterations, and this maximum value is increased every time we zoom in so that finer details can be displayed.<br><br>This has two effects: one, the fractal takes longer to draw the further you zoom in; and two, the colors, and the exact edge of the black area, will shift as you zoom in. The shifting colors and edges are merely artifacts of the program. The true, mathematical fractal doesn't change its shape or colors as you zoom in further.";
+  } else {
+   divs.primeDiv.innerHTML="This is the maximum zoom for this program. But mathematically, the fractal goes on forever.";
+   divs.infoDiv.innerHTML="<br>Try going back to the default zoom and looking at a different part of the fractal, or starting a new fractal.";
+  }
+
+  if (zoomLvl <13) { // maxzoom=13, beyond that runs into limits
+   var zoomButton=makeButton("Zoom in", divs.buttonDiv)
+   zoomButton.onclick=function(){
+    $(instructions).slideUp("fast",function(){
+     var divs=instructionsSetup(instructions);
+     divs.primeDiv.innerHTML="Choose an area to zoom in on. Try examining the edges of the black areas.";
+     $(divs.buttonDiv).empty();
+     $(instructions).slideDown("fast")
+     var zoomArea=document.createElement("IMG")
+     zoomArea.src="http://3.bp.blogspot.com/-oFWE2oITA4k/VEjHPsmTSrI/AAAAAAAAA1k/LzVCG4wAhgg/s1600/border.png";
+     zoomArea.style.position="absolute";
+     zoomArea.height=canvas.height/10;
+     zoomArea.width=canvas.width/10;
+     postBody.appendChild(zoomArea);
+     postBody.onmousemove=function(event){
+      var coords=relMouseCoords(event, canvas);
+      if (0<=coords.x && coords.x<=canvas.width && 0<=coords.y && coords.y<=canvas.height) {
+       zoomArea.style.top=(coords.y-zoomArea.height/2)+"px";
+       zoomArea.style.left=(coords.x-zoomArea.width/2)+"px";
+      }
+     }
+     zoomArea.onclick=function(event){
+      var pixCoords=relMouseCoords(event, canvas)
+      if (0<=pixCoords.x && pixCoords.x<=canvas.width && 0<=pixCoords.y && pixCoords.y<=canvas.height) {
+       postBody.onmousemove=function(){}
+       zoomArea.parentNode.removeChild(zoomArea);
+       var nextCenterX=(pixCoords.x-ORIGIN_OFFSET)/tempPixelPerUnit+centerX;
+       var nextCenterY=-(pixCoords.y-ORIGIN_OFFSET)/tempPixelPerUnit+centerY;
+       allPoints(drawing,state,z,instructions,canvas, zoomLvl+1,nextCenterX,nextCenterY)
+      }
+     }
+    })
+   }
+  } 
+
+  var resetButton=makeButton("Start a new fractal", divs.buttonDiv)
+  resetButton.onclick=function(){
+   $(instructions).slideUp("fast",function(){
+    var divs=instructionsSetup(instructions);
+    divs.primeDiv.innerHTML="We're about to reset the canvas and start over. Which fractal should we draw next? Click the 'More info...' button to learn more about each set.";
+    divs.infoDiv.innerHTML="<br>The Mandelbrot set is the fractal that we first started with.<br><br>The Julia set is a group of fractals closely related to the Mandelbrot set. It is parameterized by your choice of a single point before we begin drawing the fractal. You can choose any point on the canvas, and each point leads to a different fractal in the Julia set!";
+
+    var newJuliaButton=makeButton("New Julia set", divs.buttonDiv);
+    newJuliaButton.onclick=function(){
+     z.c=undefined;
+     drawing.lastPoint=0;
+     drawing.steps=[];
+     if (drawing.juliaBackground!==undefined) { // should always be true
+      drawing.steps.push(drawing.juliaBackground);
+      drawing.lastPoint++;
+      drawing.steps.push(draw(setup,false,drawing.cPlane))
+     }
+     wrapUp(drawing);
+     z.maxN=50;
+     state.fractalType="julia";
+     firstPointInstuctions(drawing,state,z,instructions,canvas);
+    }
+
+    var newMandelbrotButton=makeButton("New Mandelbrot set", divs.buttonDiv);
+    newMandelbrotButton.onclick=function(){
+     z.c=undefined;
+     drawing.lastPoint=0;
+     drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+     wrapUp(drawing);
+     z.maxN=50;
+     state.fractalType="mandelbrot";
+     $(instructions).slideUp("fast",function(){
+      var divs=instructionsSetup(instructions);
+      divs.primeDiv.innerHTML="The Mandelbrot set is the fractal that we first started with. We're drawing it from the beginning again. Which points should we color?";
+      divs.infoDiv.innerHTML="<br>'A new point' will explain the procedure for determining the color of a single point, focusing on the three steps of each iteration, and how the number of iterations determine the color of the point.<br><br>'Some random points' will color many scattered random points very quickly.<br><br>'Points in a small area' will allow you to color the points in a small area, producing a mosaic pattern in which a part of the whole fractal can be discerned.<br><br>'Every single point' will color every point on the canvas, at a much higher resolution than the 'Points in a small area' button. This will display the full fractal."
+      whatNextUISetup(divs.buttonDiv,drawing,state,z,instructions,canvas);
+      $(instructions).slideDown("fast")
+     })
+    }
+    
+    var backButton=makeButton("Go back to the fractal menu", divs.buttonDiv);
+    backButton.onclick=function(){   
+     $(instructions).slideUp("fast",function(){
+      newInstructions(drawing,state,z,instructions,canvas);
+     })
+    }
+
+    $(instructions).slideDown("fast");
+   })
+  }
+
+  if (zoomLvl===0) {
+   var backButton=makeButton("Go back to discrete points", divs.buttonDiv)
+   backButton.onclick=function(){
+    drawing.steps=drawing.steps.slice(0,drawing.lastPoint+1);
+    wrapUp(drawing);
+    z.maxN=50;
+    $(instructions).slideUp("fast",function(){
+     var divs=instructionsSetup(instructions);
+     divs.primeDiv.innerHTML="Which points should we color next?";
+     divs.infoDiv.innerHTML="<br>'A new point' will explain the procedure for determining the color of a single point, focusing on the three steps of each iteration, and how the number of iterations determine the color of the point.<br><br>'Some random points' will color many scattered random points very quickly.<br><br>'Points in a small area' will allow you to color the points in a small area, producing a mosaic pattern in which a part of the whole fractal can be discerned.<br><br>'Every single point' will color every point on the canvas, at a much higher resolution than the 'Points in a small area' button. This will display the full fractal.";
+     whatNextUISetup(divs.buttonDiv,drawing,state,z,instructions,canvas)
+     $(instructions).slideDown("fast")
+    })
+   }
+  } else { 
+   var backButton=makeButton("Go back to default zoom", divs.buttonDiv)
+   backButton.onclick=function(){
+    allPoints(drawing,state,z,instructions,canvas);
+   }
+  }
+
+  $(instructions).slideDown("fast");
+ }
+}
+
+
+function wrapUp(drawing) {
+ drawing.busyUntil=Date.now(); 
+ stopAnimation(drawing);
+ for (var i in drawing.waitingToDraw) {
+  clearTimeout(drawing.waitingToDraw[i]);
+ }
+ drawing.waitingToDraw=[];
+ for (var i in drawing.addSteps) {
+  drawing.steps.push(drawing.addSteps[i]);
+ }
+ drawing.addSteps=[];
+ for (var i in drawing.tempSteps) {
+  setTimeout(drawing.tempSteps[i].run,10);
+ }
+ drawing.tempSteps=[];
+}
+
+function draw(drawingFunction,now){ /*list of arguments for function*/ //makes a "step" instruction, then passes it out, to be stored in steps, or used elsewhere
+ var step = {
+  f:drawingFunction, 
+  args:Array.prototype.slice.call(arguments,2), 
+  run:function(){step.f.apply(null,step.args);}
+ }
+ if (now) {step.run()}
+ return step
+}
+
+function animate(duration,drawing){ /*even numbered arguments after, each pair a similar step, going from initial to final*/
+ //make animation end if double clicked
+ drawing.animate=true;
+ var delta=[];
+ var stepsList=Array.prototype.slice.call(arguments,2)
+ for (var i=0; i<stepsList.length/2; i++){
+  delta[i]=[];
+  for (var j in stepsList[2*i].args) {
+   if (typeof stepsList[2*i].args[j] ==="number") {
+    delta[i][j]=stepsList[2*i+1].args[j]-stepsList[2*i].args[j];
+   } else {
+    delta[i][j]=stepsList[2*i].args[j];
+   }
+  }
+ }
+ var start=Date.now();
+ function drawStep(duration,drawing,delta,stepsList,start){
+  var t=Date.now()-start;
+  drawStepsTo(drawing);
+  if (t<duration && drawing.animate) { // drawing.animate can be turned off from the outside to stop an animation in progress
+   for (var i in delta) {
+    var argsArray=[];
+    for (j in delta[i]){
+     if (typeof delta[i][j]!=="number") {
+      argsArray[j]=stepsList[2*i].args[j];
+     } else {
+      argsArray[j]=stepsList[2*i].args[j]+delta[i][j]*t/duration;
+     }
+    }
+    stepsList[2*i].f.apply(null,argsArray);
+   }
+   drawing.nextAnimationFrame=setTimeout(function(){drawStep(duration,drawing,delta,stepsList,start)},15);
+  }
+ }
+ drawStep(duration,drawing,delta,stepsList,start);
+}
+
+function drawStepsTo(drawing,n) {
+ drawing.cPlane.clearRect(-2,-2,4,4);
+ if (n===undefined) {n=drawing.steps.length}
+ for (var i=0; i<n; i++) {
+  drawing.steps[i].run();
+ }
+}
+
+function stopAnimation(drawing) { //completely stops animation, not even shows next frame.
+ drawing.animate=false;
+ clearTimeout(drawing.nextAnimationFrame);
+ drawStepsTo(drawing);
+}
+
+/*
+low level drawing commands
+*/
+
+function arrowTip(xf,yf,angle,cPlane,style) {
+ if (style) {
+  cPlane.save();
+  for (prop in style){cPlane[prop]=style[prop]}
+ }
+ var len0=cPlane.lineWidth*3;
+ var x1=xf+2*len0*Math.cos(angle+Math.PI)+len0*Math.cos(angle+Math.PI/2);
+ var y1=yf+2*len0*Math.sin(angle+Math.PI)+len0*Math.sin(angle+Math.PI/2);
+ cPlane.beginPath();
+ cPlane.moveTo(xf,yf);
+ cPlane.lineTo(x1,y1);
+ var x2=xf+2*len0*Math.cos(angle+Math.PI)+len0*Math.cos(angle-Math.PI/2);
+ var y2=yf+2*len0*Math.sin(angle+Math.PI)+len0*Math.sin(angle-Math.PI/2);
+ cPlane.lineTo(x2,y2);
+ cPlane.fill(); 
+ if (style) {cPlane.restore()}
+}
+
+function arrow(xi,yi,xf,yf,cPlane,style) { // set styles before calling function
+ if (style) {
+  cPlane.save();
+  for (prop in style) {cPlane[prop]=style[prop]}
+ }
+ cPlane.beginPath();
+ cPlane.moveTo(xi,yi);
+ cPlane.lineTo(xf,yf);
+ cPlane.stroke();
+ var c1=new CNum(xf-xi,yf-yi);
+ var angle=c1.theta();
+ arrowTip(xf,yf,angle,cPlane,style);
+ if (style) {cPlane.restore()}
+}
+
+function rArrow(r,theta,cPlane,style) {
+ if (style) {
+  cPlane.save();
+  for (prop in style) {cPlane[prop]=style[prop]}
+ }
+ arrow(0,0,r*Math.cos(theta),r*Math.sin(theta),cPlane,style);
+ if (style) {cPlane.restore()}
+}
+
+function arcArrow(r,theta,cPlane,style) { // set style beforehand.
+ if (style) {
+  cPlane.save();
+  for (prop in style) {cPlane[prop]=style[prop]}
+ }
+ var n=Math.ceil(theta/(Math.PI/100));
+ var dr=cPlane.lineWidth*0.03;
+ cPlane.beginPath();
+ cPlane.moveTo(r,0); 
+ for (var i=0; i<n; i++) {
+  cPlane.arc(0,0,r+i*dr,i*Math.PI/100,Math.min(theta,(i+1)*Math.PI/100),false);
+ }
+ cPlane.stroke();
+ arrowTip((r+i*dr)*Math.cos(theta), (r+i*dr)*Math.sin(theta), theta+Math.PI/2, cPlane,style);
+ if (style) {cPlane.restore()}
+}
+
+function circle(xc,yc,r,cPlane,style) { // draw a dot as a square, set style before as always
+ if (style) {
+  cPlane.save();
+  for (prop in style) {cPlane[prop]=style[prop]}
+ }
+ if (r<0.5/PX_PER_UNIT) {r=0.5/PX_PER_UNIT}
+ cPlane.beginPath();
+ cPlane.moveTo(xc+r,yc);
+ cPlane.arc(xc,yc,r,0,2*Math.PI,false);
+ cPlane.fill();
+ if (style && style.lineWidth && style.strokeStyle) {cPlane.stroke()}
+ if (style) {cPlane.restore()}
+}
+
+function putImgData(cPlane,imgData) { // overwrites with putImageData
+ cPlane.putImageData(imgData,0,0);
+}
+
+function text(text, x, y, cPlane, font, style) {
+ cPlane.save();
+ for (prop in style) {cPlane[prop]=style[prop]}
+ drawing.cPlane.scale(1/PX_PER_UNIT,-1/PX_PER_UNIT); 
+ drawing.cPlane.translate(-ORIGIN_OFFSET,-ORIGIN_OFFSET);
+ if (font===undefined || font==="") {
+  cPlane.font="12px Arial"
+ } else {
+  cPlane.font=font;
+ }
+ cPlane.fillText(text, ORIGIN_OFFSET+PX_PER_UNIT*x, ORIGIN_OFFSET-PX_PER_UNIT*y);
+ cPlane.restore();
+}
+
+
+
+
+}());
+
+</script>
+
+</body>
+</html>
